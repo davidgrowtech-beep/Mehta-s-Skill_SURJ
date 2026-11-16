@@ -27,13 +27,11 @@ li span{color:var(--sub);font-size:13.5px}
 .adv{text-align:center;font-size:12.5px;color:var(--sub);margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
 .adv a{color:var(--brand);font-weight:600;text-decoration:none}
 .disc{font-size:11.5px;color:#7b8696;text-align:center;margin-top:16px;line-height:1.5}
-/* honeypot: invisible to people, bots that click every link/button trip it */
 .hp{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden}
 </style>
 </head>
 <body>
 <div class="wrap"><div class="card">
-<!-- LOGO: keep your original base64 <img> here, or put mehta.jpg next to this file -->
 <img class="logo" alt="Mehta" src="mm.jpg">
 <h1>Learn Enhanced Financial Skills with Mehta</h1>
 <div class="hi">मेहता के साथ फाइनेंशियल स्किल्स सीखें</div>
@@ -44,6 +42,7 @@ li span{color:var(--sub);font-size:13.5px}
 </ul>
 <button id="cta" type="button" aria-disabled="true">Join Telegram Channel<small>टेलीग्राम चैनल जॉइन करें</small></button>
 <a class="hp" id="hp" href="#" tabindex="-1" aria-hidden="true" rel="nofollow">Join Telegram</a>
+<div id="ts" class="hp" aria-hidden="true"></div>
 <p class="note" id="note">Loading… कृपया प्रतीक्षा करें</p>
 <p class="disc">Educational content only. Not investment advice; no profit is guaranteed. Markets involve risk.<br>यह केवल शैक्षिक जानकारी है, निवेश सलाह नहीं। मुनाफे की कोई गारंटी नहीं, मार्केट में जोखिम है।</p>
 <p class="adv">Advertised by : <b>SRS Marketing Agency</b><br>Link : <a href="https://t.me/srsagency" target="_blank" rel="noopener noreferrer">t.me/srsagency</a></p>
@@ -53,31 +52,50 @@ li span{color:var(--sub);font-size:13.5px}
 (function(){
   /* ===== CONFIG ===== */
   var PIXEL_ID='1363476103525995';
-  var TG_B64='aHR0cHM6Ly90Lm1lLyt3cVNhRmZJU1JMVTFNRGRs'; // invite link is NOT in plain text (blocks HTML scrapers)
-  var INVITE_API='';          // optional: serverless URL returning {"link":"https://t.me/+..."} = unique invite per click
-  var MIN_VISIBLE=3000;       // ms the page must be VISIBLE before button unlocks
-  var REQUIRE_FBCLID=true;    // Lead fires only for real Meta-ad visitors (fbclid / _fbc present)
-  var LEAD_TTL=24*3600*1000;  // one Lead per device per 24h
+  var TG_B64='aHR0cHM6Ly90Lm1lLyt3cVNhRmZJU1JMVTFNRGRs';
+  var INVITE_API='';            // serverless URL -> {"link":"https://t.me/+..."} (unique single-use invite per click)
+  var MIN_VISIBLE=3000;         // ms page must be VISIBLE before button unlocks
+  var MIN_UNLOCK_TO_CLICK=700;  // NEW: humans can't tap within 0.7s of unlock; scripts do
+  var STRICT_SOURCE=true;       // NEW: no fbclid / _fbc  => no button at all (only real Meta-ad clicks)
+  var ALLOWED_TZ=['Asia/Kolkata','Asia/Calcutta']; // NEW: India-only device timezone. Set [] to disable
+  var TURNSTILE_SITEKEY='';     // NEW (optional): Cloudflare Turnstile site key = invisible captcha
+  var LEAD_TTL=24*3600*1000;
   var KEY='lp_lead_'+PIXEL_ID;
 
   var btn=document.getElementById('cta'), note=document.getElementById('note'), hp=document.getElementById('hp');
   var signals=0, visibleMs=0, lastTick=Date.now(), pixelReady=false, pixelFailed=false;
-  var pvSent=false, busy=false, trapped=false, armedAt=0, unlocked=false;
+  var pvSent=false, busy=false, trapped=false, armedAt=0, unlocked=false, unlockedAt=0, tsToken='';
+
+  function kill(msg){ btn.style.display='none'; hp.style.display='none'; note.textContent=msg||''; }
 
   function isBot(){
     try{
       var ua=navigator.userAgent||'';
       if(navigator.webdriver) return true;
-      if(/HeadlessChrome|PhantomJS|Puppeteer|Playwright|Selenium|bot|crawl|spider|facebookexternalhit|Facebot|curl|wget|python|axios|Lighthouse|GTmetrix|Bytespider|okhttp|Go-http|node-fetch|Java\//i.test(ua)) return true;
+      if(/HeadlessChrome|PhantomJS|Puppeteer|Playwright|Selenium|(?:google|bing|yandex|baidu|ahrefs|semrush|apple|gpt|duckduck|petal|uptime)bot|\bbot\b|crawl|spider|facebookexternalhit|Facebot|curl|wget|python|axios|Lighthouse|GTmetrix|Bytespider|okhttp|Go-http|node-fetch|Java\//i.test(ua)) return true;
       if(window.callPhantom||window._phantom||window.__nightmare||window.domAutomation||window.domAutomationController) return true;
       if(!navigator.languages||navigator.languages.length===0) return true;
       if(!screen.width||!screen.height||window.innerWidth<150) return true;
       if(/Chrome/.test(ua)&&!/Edg|OPR/.test(ua)&&!window.chrome&&!/Android|iPhone|iPad|CriOS|FxiOS|Mobile/.test(ua)) return true;
-      if(/Android|iPhone|iPad/.test(ua)&&!('ontouchstart' in window)&&!(navigator.maxTouchPoints>0)) return true; // fake "mobile" UA without touch
+      if(/Android|iPhone|iPad/.test(ua)&&!('ontouchstart' in window)&&!(navigator.maxTouchPoints>0)) return true;
+      // NEW: software renderers = headless / VM / emulator farms
+      var c=document.createElement('canvas'), g=c.getContext('webgl')||c.getContext('experimental-webgl');
+      if(g){ var x=g.getExtension('WEBGL_debug_renderer_info');
+        if(x&&/SwiftShader|llvmpipe|Mesa OffScreen|VirtualBox|VMware/i.test(String(g.getParameter(x.UNMASKED_RENDERER_WEBGL)))) return true; }
     }catch(e){}
     return false;
   }
-  if(isBot()){ btn.style.display='none'; hp.style.display='none'; note.textContent=''; return; }
+  function wrongRegion(){
+    if(!ALLOWED_TZ.length) return false;
+    try{ var tz=Intl.DateTimeFormat().resolvedOptions().timeZone; return !!tz&&ALLOWED_TZ.indexOf(tz)<0; }catch(e){ return false; }
+  }
+  function fromMetaAd(){
+    return /[?&]fbclid=/.test(location.search)||/(?:^|; )_fbc=/.test(document.cookie);
+  }
+
+  if(isBot()){ kill(''); return; }
+  if(wrongRegion()){ kill('This page is for India only · यह पेज केवल भारत के लिए है'); return; }
+  if(STRICT_SOURCE&&!fromMetaAd()){ kill('Please open this page from the ad · कृपया विज्ञापन लिंक से खोलें'); return; }
 
   /* ===== storage with fallbacks ===== */
   function getRec(){
@@ -93,14 +111,23 @@ li span{color:var(--sub);font-size:13.5px}
     try{window.sessionStorage.setItem(KEY,t)}catch(e){}
     try{document.cookie=KEY+'='+t+'; max-age='+(LEAD_TTL/1000)+'; path=/; SameSite=Lax'}catch(e){}
   }
-  function fromMetaAd(){
-    return /[?&]fbclid=/.test(location.search)||/(?:^|; )_fbc=/.test(document.cookie);
-  }
   function eid(p){return p+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,10)}
 
   /* ===== Meta Pixel (PageView NOT automatic) ===== */
   !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;t.onload=function(){pixelReady=true;tryUnlock()};t.onerror=function(){pixelFailed=true;tryUnlock()};s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
   fbq('init',PIXEL_ID);
+
+  /* ===== optional Cloudflare Turnstile (invisible) ===== */
+  if(TURNSTILE_SITEKEY){
+    window.__tsLoaded=function(){
+      try{ window.turnstile.render('#ts',{sitekey:TURNSTILE_SITEKEY,appearance:'interaction-only',
+        callback:function(t){tsToken=t;tryUnlock()},
+        'error-callback':function(){kill('Verification failed · कृपया पेज रीलोड करें')}}); }catch(e){}
+    };
+    var ts=document.createElement('script'); ts.async=true;
+    ts.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=__tsLoaded';
+    document.head.appendChild(ts);
+  }
 
   /* ===== human gate: >=2 trusted physical signals + visible dwell ===== */
   var EVS=['touchstart','touchmove','pointerdown','mousemove','scroll','keydown','wheel'];
@@ -114,7 +141,7 @@ li span{color:var(--sub);font-size:13.5px}
   }
   EVS.forEach(function(n){window.addEventListener(n,onSignal,{capture:true,passive:true})});
 
-  setInterval(function(){                     // count only time the page is really visible
+  setInterval(function(){
     var now=Date.now();
     if(document.visibilityState==='visible') visibleMs+=now-lastTick;
     lastTick=now;
@@ -124,7 +151,8 @@ li span{color:var(--sub);font-size:13.5px}
   function tryUnlock(){
     if(unlocked||trapped) return;
     if(signals<2||visibleMs<MIN_VISIBLE||!(pixelReady||pixelFailed)) return;
-    unlocked=true;
+    if(TURNSTILE_SITEKEY&&!tsToken) return;
+    unlocked=true; unlockedAt=Date.now();
     if(pixelReady&&!pvSent){pvSent=true;try{fbq('track','PageView',{},{eventID:eid('pv')})}catch(e){}}
     btn.removeAttribute('aria-disabled');
     note.textContent='Tap to join · जॉइन करने के लिए टैप करें';
@@ -132,10 +160,10 @@ li span{color:var(--sub);font-size:13.5px}
   setTimeout(function(){ if(!unlocked&&signals<2) note.textContent='Scroll or touch the screen · स्क्रीन को स्क्रॉल/टच करें'; },3000);
 
   /* ===== honeypot ===== */
-  function trap(e){ if(e&&e.preventDefault) e.preventDefault(); trapped=true; unlocked=false; btn.style.display='none'; note.textContent=''; }
+  function trap(e){ if(e&&e.preventDefault) e.preventDefault(); trapped=true; unlocked=false; kill(''); }
   hp.addEventListener('click',trap); hp.addEventListener('focus',trap);
 
-  /* ===== button: a real press (pointerdown/keydown -> click) is required ===== */
+  /* ===== button: real press (pointerdown/keydown -> click) required ===== */
   function arm(e){ if(e.isTrusted) armedAt=Date.now(); }
   btn.addEventListener('pointerdown',arm);
   btn.addEventListener('keydown',function(e){ if(e.key==='Enter'||e.key===' ') arm(e); });
@@ -143,38 +171,43 @@ li span{color:var(--sub);font-size:13.5px}
   btn.addEventListener('click',function(e){
     if(!e.isTrusted||trapped||!unlocked||busy) return;
     if(btn.getAttribute('aria-disabled')==='true') return;
+    if(Date.now()-unlockedAt<MIN_UNLOCK_TO_CLICK) return;          // NEW: too fast after unlock = script
     var gap=Date.now()-armedAt; armedAt=0;
-    if(gap<0||gap>2500) return;                                   // click without a matching real press
-    if(e.detail>0&&e.clientX===0&&e.clientY===0) return;          // synthetic coordinates
+    if(gap<0||gap>2500) return;
+    if(e.detail>0){                                                 // pointer click: coords must be real AND inside the button
+      if(e.clientX===0&&e.clientY===0) return;
+      var r=btn.getBoundingClientRect();
+      if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom) return; // NEW
+    }
     busy=true; setTimeout(function(){busy=false},5000);
 
     var base=atob(TG_B64), link=null, t0=Date.now(), done=false, cid=eid('lead');
     var already=getRec();
-    var ads=!REQUIRE_FBCLID||fromMetaAd();
 
-    if(!already&&ads&&pixelReady){
+    if(!already&&pixelReady){
       try{ fbq('track','Lead',{content_name:'Telegram Channel Join'},{eventID:cid}); }catch(err){}
       setRec();
     }
     function finish(){
       if(done) return;
-      var wait=400-(Date.now()-t0);                               // let the Pixel beacon leave first
+      var wait=400-(Date.now()-t0);
       if(wait>0){ setTimeout(finish,wait); return; }
       done=true; window.location.href=link||base;
     }
     if(INVITE_API){
       try{
-        fetch(INVITE_API+(INVITE_API.indexOf('?')>-1?'&':'?')+'cid='+encodeURIComponent(cid)+'&fbp='+encodeURIComponent((document.cookie.match(/(?:^|; )_fbp=([^;]+)/)||[])[1]||'')+'&fbc='+encodeURIComponent((document.cookie.match(/(?:^|; )_fbc=([^;]+)/)||[])[1]||''))
+        var ck=function(n){return encodeURIComponent((document.cookie.match(new RegExp('(?:^|; )'+n+'=([^;]+)'))||[])[1]||'')};
+        fetch(INVITE_API+(INVITE_API.indexOf('?')>-1?'&':'?')+'cid='+encodeURIComponent(cid)+'&fbp='+ck('_fbp')+'&fbc='+ck('_fbc')+'&ts='+encodeURIComponent(tsToken))
           .then(function(r){return r.json()})
           .then(function(j){ if(j&&typeof j.link==='string'&&/^https:\/\/t\.me\//.test(j.link)) link=j.link; })
           .catch(function(){})
           .then(finish);
       }catch(err){ setTimeout(finish,400); }
-      setTimeout(finish,2200);                                    // API too slow: fall back to the static link
+      setTimeout(finish,2200);
     } else { setTimeout(finish,400); }
   });
 
-  window.addEventListener('pageshow',function(e){ if(e.persisted) busy=false; }); // back from Telegram
+  window.addEventListener('pageshow',function(e){ if(e.persisted) busy=false; });
 })();
 </script>
 </body>
