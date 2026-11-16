@@ -56,7 +56,7 @@ li span{color:var(--sub);font-size:13.5px}
   var INVITE_API='';            // serverless URL -> {"link":"https://t.me/+..."} (unique single-use invite per click)
   var MIN_VISIBLE=3000;         // ms page must be VISIBLE before button unlocks
   var MIN_UNLOCK_TO_CLICK=700;  // NEW: humans can't tap within 0.7s of unlock; scripts do
-  var STRICT_SOURCE=true;       // NEW: no fbclid / _fbc  => no button at all (only real Meta-ad clicks)
+  var STRICT_SOURCE=false;      // true = no fbclid => button hidden. false = button visible, Lead fires only for Meta-ad visitors
   var ALLOWED_TZ=['Asia/Kolkata','Asia/Calcutta']; // NEW: India-only device timezone. Set [] to disable
   var TURNSTILE_SITEKEY='';     // NEW (optional): Cloudflare Turnstile site key = invisible captcha
   var LEAD_TTL=24*3600*1000;
@@ -66,7 +66,8 @@ li span{color:var(--sub);font-size:13.5px}
   var signals=0, visibleMs=0, lastTick=Date.now(), pixelReady=false, pixelFailed=false;
   var pvSent=false, busy=false, trapped=false, armedAt=0, unlocked=false, unlockedAt=0, tsToken='';
 
-  function kill(msg){ btn.style.display='none'; hp.style.display='none'; note.textContent=msg||''; }
+  var DBG=/[?&]dbg=1/.test(location.search);
+  function kill(msg,why){ btn.style.display='none'; hp.style.display='none'; note.textContent=DBG?('BLOCKED: '+why):(msg||''); }
 
   function isBot(){
     try{
@@ -93,9 +94,9 @@ li span{color:var(--sub);font-size:13.5px}
     return /[?&]fbclid=/.test(location.search)||/(?:^|; )_fbc=/.test(document.cookie);
   }
 
-  if(isBot()){ kill(''); return; }
-  if(wrongRegion()){ kill('This page is for India only · यह पेज केवल भारत के लिए है'); return; }
-  if(STRICT_SOURCE&&!fromMetaAd()){ kill('Please open this page from the ad · कृपया विज्ञापन लिंक से खोलें'); return; }
+  if(isBot()){ kill('','bot-check (webdriver/UA/webgl/touch)'); return; }
+  if(wrongRegion()){ kill('This page is for India only · यह पेज केवल भारत के लिए है','timezone='+Intl.DateTimeFormat().resolvedOptions().timeZone); return; }
+  if(STRICT_SOURCE&&!fromMetaAd()){ kill('Please open this page from the ad · कृपया विज्ञापन लिंक से खोलें','no fbclid'); return; }
 
   /* ===== storage with fallbacks ===== */
   function getRec(){
@@ -183,8 +184,9 @@ li span{color:var(--sub);font-size:13.5px}
 
     var base=atob(TG_B64), link=null, t0=Date.now(), done=false, cid=eid('lead');
     var already=getRec();
+    var ads=fromMetaAd();
 
-    if(!already&&pixelReady){
+    if(!already&&ads&&pixelReady){
       try{ fbq('track','Lead',{content_name:'Telegram Channel Join'},{eventID:cid}); }catch(err){}
       setRec();
     }
